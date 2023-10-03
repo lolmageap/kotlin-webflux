@@ -1,0 +1,31 @@
+###
+GET {{domain}}/articles
+Content-Type: application/json
+
+###
+GET {{domain}}/articles/1
+Content-Type: application/json
+
+###
+POST {{domain}}/articles
+Content-Type: application/json
+
+{
+  "title": "title create",
+  "body": "body create",
+  "authorId": 1111
+}
+
+###
+PUT {{domain}}/articles/1
+Content-Type: application/json
+
+{
+  "title": "title update",
+  "body": "body update",
+  "authorId": 9999
+}
+
+###
+DELETE {{domain}}/articles/1
+Content-Type: application/json
