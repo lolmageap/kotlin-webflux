@@ -3,6 +3,7 @@ package dev.fastcampus.webfluxreactor.controller
 import dev.fastcampus.webfluxreactor.model.CreateArticle
 import dev.fastcampus.webfluxreactor.model.UpdateArticle
 import dev.fastcampus.webfluxreactor.service.ArticleService
+import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.*
 
 @RestController
@@ -18,6 +19,7 @@ class ArticleController(
     fun getAll(@RequestParam title: String?) = articleService.getAll(title)
 
     @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
     fun create(@RequestBody createArticle: CreateArticle) = articleService.create(createArticle)
 
     @PutMapping("{id}")
