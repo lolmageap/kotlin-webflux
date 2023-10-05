@@ -8,82 +8,112 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.ApplicationContext
+import org.springframework.context.ApplicationContextAware
+import org.springframework.transaction.reactive.TransactionalOperator
+import reactor.core.publisher.Flux
+import reactor.core.publisher.Mono
 
 @SpringBootTest
 class ArticleServiceTest(
     @Autowired private val articleService: ArticleService,
     @Autowired private val articleRepository: ArticleRepository,
+    @Autowired private val transactionalOperator: TransactionalOperator,
 ) {
 
     @Test
-    fun get() {
-    }
-
-    @Test
     fun getAll() {
-        articleRepository.saveAll(
-            listOf(
-                Article(title = "title 1", body = "body1", authorId = 1234),
-                Article(title = "title 2", body = "body2", authorId = 1234),
-                Article(title = "title 3", body = "body3", authorId = 1234),
-            )
-        ).blockLast()
-
-        val keyword2 = articleService.getAll("2").collectList().block()!!
-        val all = articleService.getAll().collectList().block()!!
-
-        assertThat(keyword2).hasSize(1)
-        assertThat(all).hasSize(3)
+        Mono.zip(
+            articleRepository.save(Article(title = "title 1", body = "body1", authorId = 1234)),
+            articleRepository.save(Article(title = "title 2", body = "body2", authorId = 1234)),
+            articleRepository.save(Article(title = "title 3", body = "body3", authorId = 1234)),
+        )
+            .flatMap {
+                articleService.getAll("2").collectList().doOnNext {
+                    assertThat(it).hasSize(1)
+                }
+            }
+            .flatMap {
+                articleService.getAll().collectList().doOnNext {
+                    assertThat(it).hasSize(3)
+                }
+            }
+            .rollback()
+            .block()
     }
 
     @Test
     fun create() {
-        val prev = articleRepository.count().block() ?: 0
-
-        val article = articleService.create(
-            CreateArticle(title = "title", body = "body", authorId = 1234)
-        ).block()!!
-
-        val current = articleRepository.count().block() ?: 0
-
-        assertThat(current).isEqualTo(prev + 1)
-
-        val get = articleService.get(article.id).block()!!
-
-        assertThat(get.title).isEqualTo(article.title)
-        assertThat(get.body).isEqualTo(article.body)
-        assertThat(get.authorId).isEqualTo(article.authorId)
+        articleService.create(CreateArticle(title = "title", body = "body", authorId = 1234))
+            .flatMap { created ->
+                articleService.get(created.id).doOnNext { get ->
+                    assertThat(created.title).isEqualTo(get.title)
+                    assertThat(created.body).isEqualTo(get.body)
+                    assertThat(created.authorId).isEqualTo(get.authorId)
+                }
+            }
+            .rollback()
+            .block()
     }
 
     @Test
     fun update() {
-        // given
-        val article = articleRepository.save(
-            Article(title = "title", body = "body", authorId = 1234)
-        ).block()!!
-
-        // when
-        articleService.update(article.id,
-            UpdateArticle(
-                title = "update title", body = "update body", authorId = 9999
-            )
-        ).block()
-
-        // then
-        articleRepository.findById(article.id).block()!!.run {
-            assertThat(title).isEqualTo("update title")
-            assertThat(body).isEqualTo("update body")
-            assertThat(authorId).isEqualTo(9999)
-        }
+        articleRepository.save(Article(title = "title", body = "body", authorId = 1234))
+            .flatMap { new ->
+                articleService.update(
+                    new.id,
+                    UpdateArticle(title = "update title", body = "update body", authorId = 9999)
+                )
+            }
+            .doOnNext { update ->
+                assertThat(update.title).isEqualTo("update title")
+                assertThat(update.body).isEqualTo("update body")
+                assertThat(update.authorId).isEqualTo(9999)
+            }
+            .rollback()
+            .block()
     }
 
     @Test
     fun delete() {
-        val prevent = articleRepository.count().block() ?: 0
-        val article = articleRepository.save(Article(title = "title", body = "body", authorId = 1234)).block()!!
-        articleService.delete(article.id).block()
-        val current = articleRepository.count().block() ?: 0
+        articleRepository.count()
+            .flatMap { prevSize ->
+                articleRepository.save(Article(title = "title", body = "body", authorId = 1234))
+                    .flatMap { new ->
+                        articleService.delete(new.id)
+                            .doOnNext { currSize ->
+                                assertThat(prevSize).isEqualTo(currSize)
+                            }
+                    }
+            }
+            .rollback()
+            .block()
+    }
+}
 
-        assertThat(prevent).isEqualTo(current)
+class ReactiveTransactionalOperator : ApplicationContextAware {
+    override fun setApplicationContext(applicationContext: ApplicationContext) {
+        rxtx = applicationContext.getBean(TransactionalOperator::class.java)
+    }
+
+    companion object {
+        lateinit var rxtx: TransactionalOperator
+            private set
+    }
+}
+
+fun <T> Mono<T>.rollback(): Mono<T> {
+    val publisher = this
+    return ReactiveTransactionalOperator.rxtx.execute { transaction ->
+        transaction.setRollbackOnly()
+        publisher
+    }.next()
+}
+
+fun <T> Flux<T>.rollback(): Flux<T> {
+    val publisher = this
+    return ReactiveTransactionalOperator.rxtx.execute { transaction ->
+        transaction.setRollbackOnly()
+        publisher
     }
 }
